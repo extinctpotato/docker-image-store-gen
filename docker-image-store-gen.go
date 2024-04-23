@@ -29,7 +29,7 @@ func main() {
 		Root:                      *pathPtr,
 		MetadataStorePathTemplate: filepath.Join(*pathPtr, "image", "%s", "layerdb"),
 		GraphDriver:               "overlay2",
-		ExperimentalEnabled:       false,
+		ExperimentalEnabled:       true,
 	})
 	if err != nil {
 		fmt.Printf("unable to initialize layerStore\n")
@@ -57,6 +57,9 @@ func main() {
 	}
 
 	tarExporter := tarexport.NewTarExporter(imageStore, layerStore, rs, new(CustomLogger))
-	_ = tarExporter
-	_ = tarPath
+	tarToLoad, err := os.Open(*tarPath)
+	if err != nil {
+		fmt.Printf("unable to open %s: %s\n", *tarPath, err)
+	}
+	tarExporter.Load(tarToLoad, os.Stderr, false)
 }
