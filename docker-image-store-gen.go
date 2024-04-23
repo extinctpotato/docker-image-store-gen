@@ -57,4 +57,6 @@ func main() {
 	}
 
 	tarExporter := tarexport.NewTarExporter(imageStore, layerStore, rs, new(CustomLogger))
+	_ = tarExporter
+	_ = tarPath
 }
