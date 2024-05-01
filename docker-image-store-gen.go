@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/containerd/log"
+
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/image/tarexport"
@@ -33,6 +35,9 @@ func main() {
 	if err := os.MkdirAll(*pathPtr, os.ModePerm); err != nil {
 		fmt.Printf("unable to create imageStore directory: %s\n", err)
 	}
+
+	log.SetLevel("warn")
+
 	pluginStore := plugin.NewStore()
 
 	layerStore, err := layer.NewStoreFromOptions(layer.StoreOptions{
@@ -45,7 +50,7 @@ func main() {
 		ExperimentalEnabled:       true,
 	})
 	if err != nil {
-		fmt.Printf("unable to initialize layerStore\n")
+		fmt.Printf("unable to initialize layerStore: %s\n", err)
 		os.Exit(1)
 	}
 
