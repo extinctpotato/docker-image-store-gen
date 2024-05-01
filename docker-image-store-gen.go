@@ -29,6 +29,10 @@ func main() {
 	tarPath := flag.String("tarpath", "/tmp/docker-image-store/test.tar", "path to the tar file to load")
 	flag.Parse()
 
+	// Create imagestore location if it doesn't exist
+	if err := os.MkdirAll(*pathPtr, os.ModePerm); err != nil {
+		fmt.Printf("unable to create imageStore directory: %s\n", err)
+	}
 	pluginStore := plugin.NewStore()
 
 	layerStore, err := layer.NewStoreFromOptions(layer.StoreOptions{
