@@ -10,7 +10,11 @@ import (
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/image/tarexport"
 	"github.com/docker/docker/layer"
+	"github.com/docker/docker/pkg/idtools"
+	"github.com/docker/docker/plugin"
 	refstore "github.com/docker/docker/reference"
+
+	_ "github.com/docker/docker/daemon/graphdriver/overlay2"
 )
 
 type CustomLogger struct {
@@ -25,10 +29,15 @@ func main() {
 	tarPath := flag.String("tarpath", "/tmp/docker-image-store/test.tar", "path to the tar file to load")
 	flag.Parse()
 
+	pluginStore := plugin.NewStore()
+
 	layerStore, err := layer.NewStoreFromOptions(layer.StoreOptions{
 		Root:                      *pathPtr,
 		MetadataStorePathTemplate: filepath.Join(*pathPtr, "image", "%s", "layerdb"),
 		GraphDriver:               "overlay2",
+		GraphDriverOptions:        nil,
+		IDMapping:                 idtools.IdentityMapping{},
+		PluginGetter:              pluginStore,
 		ExperimentalEnabled:       true,
 	})
 	if err != nil {
