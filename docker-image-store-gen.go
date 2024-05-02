@@ -4,7 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"syscall"
 
 	"github.com/containerd/log"
 
@@ -29,7 +31,27 @@ func (l *CustomLogger) LogImageEvent(imageID, refName string, action events.Acti
 func main() {
 	pathPtr := flag.String("path", "/tmp/docker-image-store", "path to the image store")
 	tarPath := flag.String("tarpath", "/tmp/docker-image-store/test.tar", "path to the tar file to load")
+	unshare := flag.Bool("unshare", false, "Run in a separate user and mount namespace")
 	flag.Parse()
+
+	fmt.Printf("My uid: %d\n", os.Getuid())
+
+	if *unshare && os.Getuid() != 0 {
+		cmd := exec.Command(os.Args[0], os.Args[1:]...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Unshareflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER,
+			UidMappings:  []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
+			GidMappings:  []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
+		}
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("unable to re-execute: %s\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	// Create imagestore location if it doesn't exist
 	if err := os.MkdirAll(*pathPtr, os.ModePerm); err != nil {
