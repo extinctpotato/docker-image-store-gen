@@ -101,5 +101,7 @@ func main() {
 	if err != nil {
 		fmt.Printf("unable to open %s: %s\n", *tarPath, err)
 	}
-	tarExporter.Load(tarToLoad, os.Stderr, false)
+	if err = tarExporter.Load(tarToLoad, os.Stderr, false); err != nil {
+		fmt.Printf("unable to load tar: %s\n", err)
+	}
 }
