@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
 	"github.com/containerd/log"
@@ -42,15 +43,22 @@ func main() {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Unshareflags:               syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER | syscall.CLONE_FS,
-			UidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getuid(), Size: 1}},
-			GidMappings:                []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getgid(), Size: 1}},
-			GidMappingsEnableSetgroups: false,
+			Unshareflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER,
 		}
-		if err := cmd.Run(); err != nil {
+		if err := cmd.Start(); err != nil {
 			fmt.Printf("unable to re-execute: %s\n", err)
 			os.Exit(1)
 		}
+
+		newUidMap := exec.Command("newuidmap", strconv.Itoa(cmd.Process.Pid), "0", strconv.Itoa(os.Getuid()), "1", "1", "54321", "65536")
+		newGidMap := exec.Command("newgidmap", strconv.Itoa(cmd.Process.Pid), "0", strconv.Itoa(os.Getgid()), "1", "1", "54321", "65536")
+		newUidMap.Stdout = os.Stdout
+		newUidMap.Stderr = os.Stderr
+		newGidMap.Stderr = os.Stderr
+		newGidMap.Stdout = os.Stdout
+		newUidMap.Start()
+		newGidMap.Start()
+		cmd.Wait()
 		os.Exit(0)
 	}
 
