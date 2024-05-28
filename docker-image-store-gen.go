@@ -29,36 +29,62 @@ func (l *CustomLogger) LogImageEvent(imageID, refName string, action events.Acti
 	fmt.Printf("Event detected on imageID %s, refName %s with action %s", imageID, refName, action)
 }
 
+func removeString(s []string, unwanted string) []string {
+	for i, v := range s {
+		if v == unwanted {
+			return append(s[:i], s[i+1:]...)
+		}
+	}
+	return s
+}
+
 func main() {
 	pathPtr := flag.String("path", "/tmp/docker-image-store", "path to the image store")
 	tarPath := flag.String("tarpath", "/tmp/docker-image-store/test.tar", "path to the tar file to load")
 	unshare := flag.Bool("unshare", false, "Run in a separate user and mount namespace")
 	flag.Parse()
 
-	fmt.Printf("My uid: %d\n", os.Getuid())
+	fmt.Printf("ids: %d,%d,%d,%d\n", os.Getuid(), os.Geteuid(), os.Getgid(), os.Getegid())
 
-	if *unshare && os.Getuid() != 0 {
-		cmd := exec.Command(os.Args[0], os.Args[1:]...)
+	if *unshare {
+		if os.Getuid() != 0 {
+			cmd := exec.Command(os.Args[0], os.Args[1:]...)
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				Unshareflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER,
+			}
+			if err := cmd.Start(); err != nil {
+				fmt.Printf("unable to re-execute: %s\n", err)
+				os.Exit(1)
+			}
+
+			newUidMap := exec.Command("newuidmap", strconv.Itoa(cmd.Process.Pid), "0", strconv.Itoa(os.Getuid()), "1", "1", "54321", "65536")
+			newGidMap := exec.Command("newgidmap", strconv.Itoa(cmd.Process.Pid), "0", strconv.Itoa(os.Getgid()), "1", "1", "54321", "65536")
+			newUidMap.Stdout = os.Stdout
+			newUidMap.Stderr = os.Stderr
+			newGidMap.Stderr = os.Stderr
+			newGidMap.Stdout = os.Stdout
+			newUidMap.Run()
+			newGidMap.Run()
+
+			if err := cmd.Wait(); err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					os.Exit(exitErr.ExitCode())
+				}
+			}
+			os.Exit(0)
+		}
+		cmd := exec.Command(os.Args[0], removeString(os.Args[1:], "-unshare")...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Unshareflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER,
+		if err := cmd.Run(); err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				os.Exit(exitErr.ExitCode())
+			}
 		}
-		if err := cmd.Start(); err != nil {
-			fmt.Printf("unable to re-execute: %s\n", err)
-			os.Exit(1)
-		}
-
-		newUidMap := exec.Command("newuidmap", strconv.Itoa(cmd.Process.Pid), "0", strconv.Itoa(os.Getuid()), "1", "1", "54321", "65536")
-		newGidMap := exec.Command("newgidmap", strconv.Itoa(cmd.Process.Pid), "0", strconv.Itoa(os.Getgid()), "1", "1", "54321", "65536")
-		newUidMap.Stdout = os.Stdout
-		newUidMap.Stderr = os.Stderr
-		newGidMap.Stderr = os.Stderr
-		newGidMap.Stdout = os.Stdout
-		newUidMap.Start()
-		newGidMap.Start()
-		cmd.Wait()
 		os.Exit(0)
 	}
 
