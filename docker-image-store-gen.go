@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -29,7 +30,7 @@ type CustomLogger struct {
 }
 
 func (l *CustomLogger) LogImageEvent(imageID, refName string, action events.Action) {
-	fmt.Printf("Event detected on imageID %s, refName %s with action %s", imageID, refName, action)
+	log.G(context.TODO()).WithFields(log.Fields{"image": imageID, "ref": refName, "action": action}).Info("Event detected")
 }
 
 type NoValidIdMappingError struct {
@@ -143,7 +144,7 @@ func main() {
 		fmt.Printf("unable to create imageStore directory: %s\n", err)
 	}
 
-	log.SetLevel("warn")
+	log.SetLevel("info")
 
 	pluginStore := plugin.NewStore()
 
