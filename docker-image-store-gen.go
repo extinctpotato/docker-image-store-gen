@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/containerd/log"
@@ -29,6 +32,15 @@ func (l *CustomLogger) LogImageEvent(imageID, refName string, action events.Acti
 	fmt.Printf("Event detected on imageID %s, refName %s with action %s", imageID, refName, action)
 }
 
+type NoValidIdMappingError struct {
+	filename *string
+	user     *user.User
+}
+
+func (e *NoValidIdMappingError) Error() string {
+	return "no valid id map found in " + *e.filename + " for " + e.user.Uid
+}
+
 func removeString(s []string, unwanted string) []string {
 	for i, v := range s {
 		if v == unwanted {
@@ -36,6 +48,38 @@ func removeString(s []string, unwanted string) []string {
 		}
 	}
 	return s
+}
+
+func idMapping(filename string) (string, string, error) {
+	currentUser, err := user.Current()
+	if err != nil {
+		return "", "", fmt.Errorf("unable to obtain current user: %s", err)
+	}
+
+	file, err := os.Open("/etc/" + filename)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to open id file %s: %s", filename, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		if mapping := strings.Split(scanner.Text(), ":"); len(mapping) == 3 {
+			if mapping[0] == currentUser.Uid || mapping[0] == currentUser.Username {
+				return mapping[1], mapping[2], nil
+			}
+		}
+	}
+
+	return "", "", &NoValidIdMappingError{&filename, currentUser}
+}
+
+func idMapCommand(idType string, pid int, currentId int) (*exec.Cmd, error) {
+	idStart, count, err := idMapping("sub" + idType)
+	if err != nil {
+		return nil, err
+	}
+	return exec.Command("new"+idType+"map", strconv.Itoa(pid), "0", strconv.Itoa(currentId), "1", "1", idStart, count), nil
 }
 
 func main() {
@@ -60,8 +104,14 @@ func main() {
 				os.Exit(1)
 			}
 
-			newUidMap := exec.Command("newuidmap", strconv.Itoa(cmd.Process.Pid), "0", strconv.Itoa(os.Getuid()), "1", "1", "54321", "65536")
-			newGidMap := exec.Command("newgidmap", strconv.Itoa(cmd.Process.Pid), "0", strconv.Itoa(os.Getgid()), "1", "1", "54321", "65536")
+			newUidMap, err := idMapCommand("uid", cmd.Process.Pid, os.Getuid())
+			if err != nil {
+				fmt.Printf("uid mapping error: %s\n", err)
+			}
+			newGidMap, err := idMapCommand("gid", cmd.Process.Pid, os.Getgid())
+			if err != nil {
+				fmt.Printf("gid mapping error: %s\n", err)
+			}
 			newUidMap.Stdout = os.Stdout
 			newUidMap.Stderr = os.Stderr
 			newGidMap.Stderr = os.Stderr
