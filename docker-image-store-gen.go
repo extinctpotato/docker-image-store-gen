@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -26,11 +28,70 @@ import (
 	_ "github.com/docker/docker/daemon/graphdriver/overlay2"
 )
 
+// RunningInUserNS detects whether we are currently running in a user namespace.
+// Originally copied from github.com/lxc/lxd/shared/util.go
+func RunningInUserNS() bool {
+	file, err := os.Open("/proc/self/uid_map")
+	if err != nil {
+		// This kernel-provided file only exists if user namespaces are supported
+		return false
+	}
+	defer file.Close()
+
+	buf := bufio.NewReader(file)
+	l, _, err := buf.ReadLine()
+	if err != nil {
+		// EOF means an empty file which happens in namespaces running as nobody
+		if err == io.EOF {
+			return true
+		}
+		return false
+	}
+
+	line := string(l)
+	var a, b, c int64
+	fmt.Sscanf(line, "%d %d %d", &a, &b, &c)
+
+	/*
+	 * We assume we are in the initial user namespace if we have a full
+	 * range - 4294967295 uids starting at uid 0.
+	 */
+	if a == 0 && b == 0 && c == 4294967295 {
+		return false
+	}
+	return true
+}
+
 type CustomLogger struct {
 }
 
 func (l *CustomLogger) LogImageEvent(imageID, refName string, action events.Action) {
 	log.G(context.TODO()).WithFields(log.Fields{"image": imageID, "ref": refName, "action": action}).Info("Event detected")
+}
+
+type newXMapLoggerInputType int
+
+const (
+	XMapStdout newXMapLoggerInputType = iota
+	XMapStderr
+)
+
+type NewXMapLogger struct {
+	command   *string
+	inputType newXMapLoggerInputType
+}
+
+func (l NewXMapLogger) Write(p []byte) (int, error) {
+	baseLogger := log.G(context.TODO()).WithFields(log.Fields{"idmap": *l.command})
+	loggerMap := map[newXMapLoggerInputType]func(...interface{}){
+		XMapStdout: baseLogger.Info,
+		XMapStderr: baseLogger.Error,
+	}
+	scanner := bufio.NewScanner(bytes.NewBuffer(p))
+	for scanner.Scan() {
+		loggerMap[l.inputType](scanner.Text())
+	}
+	return len(p), nil
 }
 
 type NoValidIdMappingError struct {
@@ -80,7 +141,10 @@ func idMapCommand(idType string, pid int, currentId int) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	return exec.Command("new"+idType+"map", strconv.Itoa(pid), "0", strconv.Itoa(currentId), "1", "1", idStart, count), nil
+	cmd := exec.Command("new"+idType+"map", strconv.Itoa(pid), "0", strconv.Itoa(currentId), "1", "1", idStart, count)
+	cmd.Stderr = NewXMapLogger{command: &idType, inputType: XMapStderr}
+	cmd.Stdout = NewXMapLogger{command: &idType, inputType: XMapStdout}
+	return cmd, nil
 }
 
 func main() {
@@ -89,10 +153,19 @@ func main() {
 	unshare := flag.Bool("unshare", false, "Run in a separate user and mount namespace")
 	flag.Parse()
 
-	fmt.Printf("ids: %d,%d,%d,%d\n", os.Getuid(), os.Geteuid(), os.Getgid(), os.Getegid())
+	isNs := RunningInUserNS()
+	log.G(context.TODO()).WithFields(log.Fields{
+		"uid":  os.Getuid(),
+		"euid": os.Geteuid(),
+		"gid":  os.Getgid(),
+		"egid": os.Getegid(),
+		"pid":  os.Getpid(),
+		"isNs": isNs,
+	}).Info("initializing")
 
 	if *unshare {
-		if os.Getuid() != 0 {
+		if !isNs {
+			readPipe, writePipe, _ := os.Pipe()
 			cmd := exec.Command(os.Args[0], os.Args[1:]...)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
@@ -100,6 +173,7 @@ func main() {
 			cmd.SysProcAttr = &syscall.SysProcAttr{
 				Unshareflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER,
 			}
+			cmd.ExtraFiles = []*os.File{readPipe}
 			if err := cmd.Start(); err != nil {
 				fmt.Printf("unable to re-execute: %s\n", err)
 				os.Exit(1)
@@ -113,12 +187,11 @@ func main() {
 			if err != nil {
 				fmt.Printf("gid mapping error: %s\n", err)
 			}
-			newUidMap.Stdout = os.Stdout
-			newUidMap.Stderr = os.Stderr
-			newGidMap.Stderr = os.Stderr
-			newGidMap.Stdout = os.Stdout
+
 			newUidMap.Run()
 			newGidMap.Run()
+
+			writePipe.Close()
 
 			if err := cmd.Wait(); err != nil {
 				if exitErr, ok := err.(*exec.ExitError); ok {
@@ -127,6 +200,14 @@ func main() {
 			}
 			os.Exit(0)
 		}
+		readPipe := os.NewFile(uintptr(3), "pipe")
+		log.G(context.TODO()).Info("reading from pipe")
+		buf := make([]byte, 1)
+		_, err := readPipe.Read(buf)
+		if err != nil {
+			log.G(context.TODO()).Info("pipe fell through")
+		}
+
 		cmd := exec.Command(os.Args[0], removeString(os.Args[1:], "-unshare")...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
