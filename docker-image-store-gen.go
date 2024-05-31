@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"github.com/docker/docker/image/tarexport"
 	"github.com/docker/docker/layer"
 	"github.com/docker/docker/pkg/idtools"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/plugin"
 	refstore "github.com/docker/docker/reference"
 
@@ -90,6 +92,27 @@ func (l NewXMapLogger) Write(p []byte) (int, error) {
 	scanner := bufio.NewScanner(bytes.NewBuffer(p))
 	for scanner.Scan() {
 		loggerMap[l.inputType](scanner.Text())
+	}
+	return len(p), nil
+}
+
+type TarExportLogger struct {
+}
+
+func (l TarExportLogger) Write(p []byte) (int, error) {
+	var jsonMsg jsonmessage.JSONMessage
+	baseLogger := log.G(context.TODO()).WithField("module", "tar-loader")
+	if err := json.Unmarshal(p, &jsonMsg); err != nil {
+		baseLogger.WithError(err).Warnln(string(p))
+		return 0, err
+	}
+	if jsonMsg.Progress != nil {
+		baseLogger.WithFields(log.Fields{
+			"current": jsonMsg.Progress.Current,
+			"total":   jsonMsg.Progress.Total,
+		}).Infoln(jsonMsg.Status)
+	} else {
+		baseLogger.Infoln(jsonMsg.Stream)
 	}
 	return len(p), nil
 }
@@ -268,7 +291,7 @@ func main() {
 	if err != nil {
 		fmt.Printf("unable to open %s: %s\n", *tarPath, err)
 	}
-	if err = tarExporter.Load(tarToLoad, os.Stderr, false); err != nil {
+	if err = tarExporter.Load(tarToLoad, new(TarExportLogger), false); err != nil {
 		fmt.Printf("unable to load tar: %s\n", err)
 	}
 }
