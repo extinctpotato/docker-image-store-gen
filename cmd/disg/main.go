@@ -2,9 +2,7 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -17,13 +15,12 @@ import (
 	"syscall"
 
 	"github.com/containerd/log"
+	"github.com/extinctpotato/docker-image-store-gen/loggers"
 
-	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/image/tarexport"
 	"github.com/docker/docker/layer"
 	"github.com/docker/docker/pkg/idtools"
-	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/plugin"
 	refstore "github.com/docker/docker/reference"
 
@@ -64,58 +61,12 @@ func RunningInUserNS() bool {
 	return true
 }
 
-type CustomLogger struct {
-}
-
-func (l *CustomLogger) LogImageEvent(imageID, refName string, action events.Action) {
-	log.G(context.TODO()).WithFields(log.Fields{"image": imageID, "ref": refName, "action": action}).Info("Event detected")
-}
-
 type newXMapLoggerInputType int
 
 const (
 	XMapStdout newXMapLoggerInputType = iota
 	XMapStderr
 )
-
-type NewXMapLogger struct {
-	command   *string
-	inputType newXMapLoggerInputType
-}
-
-func (l NewXMapLogger) Write(p []byte) (int, error) {
-	baseLogger := log.G(context.TODO()).WithFields(log.Fields{"idmap": *l.command})
-	loggerMap := map[newXMapLoggerInputType]func(...interface{}){
-		XMapStdout: baseLogger.Info,
-		XMapStderr: baseLogger.Error,
-	}
-	scanner := bufio.NewScanner(bytes.NewBuffer(p))
-	for scanner.Scan() {
-		loggerMap[l.inputType](scanner.Text())
-	}
-	return len(p), nil
-}
-
-type TarExportLogger struct {
-}
-
-func (l TarExportLogger) Write(p []byte) (int, error) {
-	var jsonMsg jsonmessage.JSONMessage
-	baseLogger := log.G(context.TODO()).WithField("module", "tar-loader")
-	if err := json.Unmarshal(p, &jsonMsg); err != nil {
-		baseLogger.WithError(err).Warnln(string(p))
-		return 0, err
-	}
-	if jsonMsg.Progress != nil {
-		baseLogger.WithFields(log.Fields{
-			"current": jsonMsg.Progress.Current,
-			"total":   jsonMsg.Progress.Total,
-		}).Infoln(jsonMsg.Status)
-	} else {
-		baseLogger.Infoln(jsonMsg.Stream)
-	}
-	return len(p), nil
-}
 
 type NoValidIdMappingError struct {
 	filename *string
@@ -164,9 +115,10 @@ func idMapCommand(idType string, pid int, currentId int) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("new"+idType+"map", strconv.Itoa(pid), "0", strconv.Itoa(currentId), "1", "1", idStart, count)
-	cmd.Stderr = NewXMapLogger{command: &idType, inputType: XMapStderr}
-	cmd.Stdout = NewXMapLogger{command: &idType, inputType: XMapStdout}
+	commandName := "new" + idType + "map"
+	cmd := exec.Command(commandName, strconv.Itoa(pid), "0", strconv.Itoa(currentId), "1", "1", idStart, count)
+	cmd.Stderr = loggers.NewStderrIdmapLogger(commandName)
+	cmd.Stdout = loggers.NewStdoutIdmapLogger(commandName)
 	return cmd, nil
 }
 
@@ -286,12 +238,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	tarExporter := tarexport.NewTarExporter(imageStore, layerStore, rs, new(CustomLogger))
+	tarExporter := tarexport.NewTarExporter(imageStore, layerStore, rs, new(loggers.TarExporterLogger))
 	tarToLoad, err := os.Open(*tarPath)
 	if err != nil {
 		fmt.Printf("unable to open %s: %s\n", *tarPath, err)
 	}
-	if err = tarExporter.Load(tarToLoad, new(TarExportLogger), false); err != nil {
+	if err = tarExporter.Load(tarToLoad, new(loggers.TarExporterLoadLogger), false); err != nil {
 		fmt.Printf("unable to load tar: %s\n", err)
 	}
 }
