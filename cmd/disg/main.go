@@ -61,13 +61,6 @@ func RunningInUserNS() bool {
 	return true
 }
 
-type newXMapLoggerInputType int
-
-const (
-	XMapStdout newXMapLoggerInputType = iota
-	XMapStderr
-)
-
 type NoValidIdMappingError struct {
 	filename *string
 	user     *user.User
