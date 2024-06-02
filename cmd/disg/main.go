@@ -7,11 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 
 	"github.com/containerd/log"
 	"github.com/extinctpotato/docker-image-store-gen/idmap"
 	"github.com/extinctpotato/docker-image-store-gen/loggers"
+	"github.com/extinctpotato/docker-image-store-gen/process"
 
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/image/tarexport"
@@ -22,15 +22,6 @@ import (
 
 	_ "github.com/docker/docker/daemon/graphdriver/overlay2"
 )
-
-func removeString(s []string, unwanted string) []string {
-	for i, v := range s {
-		if v == unwanted {
-			return append(s[:i], s[i+1:]...)
-		}
-	}
-	return s
-}
 
 func newIdMap(pid int) error {
 	uidInfo, err := idmap.NewUidInfo()
@@ -74,15 +65,11 @@ func main() {
 
 	if *unshare {
 		if !isNs {
-			readPipe, writePipe, _ := os.Pipe()
-			cmd := exec.Command(os.Args[0], os.Args[1:]...)
-			cmd.Stdin = os.Stdin
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			cmd.SysProcAttr = &syscall.SysProcAttr{
-				Unshareflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER,
+			cmd, writePipe, err := process.NewFirstLevelReExec()
+			if err != nil {
+				log.G(context.TODO()).WithError(err).Error("first level fail")
+				os.Exit(1)
 			}
-			cmd.ExtraFiles = []*os.File{readPipe}
 			if err := cmd.Start(); err != nil {
 				log.G(context.TODO()).WithField("args", cmd.Args).WithError(err).Error("unable to re-execute")
 				os.Exit(1)
@@ -100,23 +87,17 @@ func main() {
 					os.Exit(exitErr.ExitCode())
 				}
 			}
-			os.Exit(0)
-		}
-		readPipe := os.NewFile(uintptr(3), "pipe")
-		log.G(context.TODO()).Info("reading from pipe")
-		buf := make([]byte, 1)
-		_, err := readPipe.Read(buf)
-		if err != nil {
-			log.G(context.TODO()).Info("pipe fell through")
-		}
+		} else {
+			err := process.WaitForPipe()
+			if err != nil {
+				log.G(context.TODO()).WithError(err).Error("waiting for pipe failed")
+				os.Exit(1)
+			}
 
-		cmd := exec.Command(os.Args[0], removeString(os.Args[1:], "-unshare")...)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				os.Exit(exitErr.ExitCode())
+			if err := process.NewSecondLevelReExec().Run(); err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					os.Exit(exitErr.ExitCode())
+				}
 			}
 		}
 		os.Exit(0)
