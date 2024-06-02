@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,8 @@ import (
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/image/tarexport"
 	"github.com/docker/docker/layer"
+	"github.com/docker/docker/pkg/archive"
+	"github.com/docker/docker/pkg/chrootarchive"
 	"github.com/docker/docker/pkg/idtools"
 	"github.com/docker/docker/plugin"
 	refstore "github.com/docker/docker/reference"
@@ -50,6 +53,7 @@ func newIdMap(pid int) error {
 func main() {
 	pathPtr := flag.String("path", "/tmp/docker-image-store", "path to the image store")
 	tarPath := flag.String("tarpath", "/tmp/docker-image-store/test.tar", "path to the tar file to load")
+	outTar := flag.String("out", "/tmp/docker-image-store.tar", "path to the output tar file")
 	unshare := flag.Bool("unshare", false, "Run in a separate user and mount namespace")
 	flag.Parse()
 
@@ -151,5 +155,18 @@ func main() {
 	}
 	if err = tarExporter.Load(tarToLoad, new(loggers.TarExporterLoadLogger), false); err != nil {
 		fmt.Printf("unable to load tar: %s\n", err)
+	}
+
+	outputTar, err := os.Create(*outTar)
+	if err != nil {
+		log.G(context.Background()).WithError(err).Error("unable to open output tar for writing")
+		os.Exit(1)
+	}
+
+	arch, err := chrootarchive.Tar(*pathPtr, &archive.TarOptions{
+		Compression: archive.Uncompressed,
+	}, *pathPtr)
+	if _, err := io.Copy(outputTar, arch); err != nil {
+		log.G(context.Background()).WithError(err).Error("writing output tar failed")
 	}
 }
