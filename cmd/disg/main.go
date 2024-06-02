@@ -1,20 +1,16 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"syscall"
 
 	"github.com/containerd/log"
+	"github.com/extinctpotato/docker-image-store-gen/idmap"
 	"github.com/extinctpotato/docker-image-store-gen/loggers"
 
 	"github.com/docker/docker/image"
@@ -27,49 +23,6 @@ import (
 	_ "github.com/docker/docker/daemon/graphdriver/overlay2"
 )
 
-// RunningInUserNS detects whether we are currently running in a user namespace.
-// Originally copied from github.com/lxc/lxd/shared/util.go
-func RunningInUserNS() bool {
-	file, err := os.Open("/proc/self/uid_map")
-	if err != nil {
-		// This kernel-provided file only exists if user namespaces are supported
-		return false
-	}
-	defer file.Close()
-
-	buf := bufio.NewReader(file)
-	l, _, err := buf.ReadLine()
-	if err != nil {
-		// EOF means an empty file which happens in namespaces running as nobody
-		if err == io.EOF {
-			return true
-		}
-		return false
-	}
-
-	line := string(l)
-	var a, b, c int64
-	fmt.Sscanf(line, "%d %d %d", &a, &b, &c)
-
-	/*
-	 * We assume we are in the initial user namespace if we have a full
-	 * range - 4294967295 uids starting at uid 0.
-	 */
-	if a == 0 && b == 0 && c == 4294967295 {
-		return false
-	}
-	return true
-}
-
-type NoValidIdMappingError struct {
-	filename *string
-	user     *user.User
-}
-
-func (e *NoValidIdMappingError) Error() string {
-	return "no valid id map found in " + *e.filename + " for " + e.user.Uid
-}
-
 func removeString(s []string, unwanted string) []string {
 	for i, v := range s {
 		if v == unwanted {
@@ -79,40 +32,28 @@ func removeString(s []string, unwanted string) []string {
 	return s
 }
 
-func idMapping(filename string) (string, string, error) {
-	currentUser, err := user.Current()
+func newIdMap(pid int) error {
+	uidInfo, err := idmap.NewUidInfo()
 	if err != nil {
-		return "", "", fmt.Errorf("unable to obtain current user: %s", err)
+		return fmt.Errorf("uid info error: %s", err)
 	}
-
-	file, err := os.Open("/etc/" + filename)
+	gidInfo, err := idmap.NewGidInfo()
 	if err != nil {
-		return "", "", fmt.Errorf("failed to open id file %s: %s", filename, err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		if mapping := strings.Split(scanner.Text(), ":"); len(mapping) == 3 {
-			if mapping[0] == currentUser.Uid || mapping[0] == currentUser.Username {
-				return mapping[1], mapping[2], nil
-			}
-		}
+		return fmt.Errorf("gid info error: %s", err)
 	}
 
-	return "", "", &NoValidIdMappingError{&filename, currentUser}
-}
-
-func idMapCommand(idType string, pid int, currentId int) (*exec.Cmd, error) {
-	idStart, count, err := idMapping("sub" + idType)
+	newUidMap, err := uidInfo.SubrangeCmd(pid)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to initialize uidmap: %s", err)
 	}
-	commandName := "new" + idType + "map"
-	cmd := exec.Command(commandName, strconv.Itoa(pid), "0", strconv.Itoa(currentId), "1", "1", idStart, count)
-	cmd.Stderr = loggers.NewStderrIdmapLogger(commandName)
-	cmd.Stdout = loggers.NewStdoutIdmapLogger(commandName)
-	return cmd, nil
+	newGidMap, err := gidInfo.SubrangeCmd(pid)
+	if err != nil {
+		return fmt.Errorf("failed to initialize gidmap: %s", err)
+	}
+
+	newUidMap.Run()
+	newGidMap.Run()
+	return nil
 }
 
 func main() {
@@ -121,7 +62,7 @@ func main() {
 	unshare := flag.Bool("unshare", false, "Run in a separate user and mount namespace")
 	flag.Parse()
 
-	isNs := RunningInUserNS()
+	isNs := idmap.RunningInUserNS()
 	log.G(context.TODO()).WithFields(log.Fields{
 		"uid":  os.Getuid(),
 		"euid": os.Geteuid(),
@@ -143,21 +84,14 @@ func main() {
 			}
 			cmd.ExtraFiles = []*os.File{readPipe}
 			if err := cmd.Start(); err != nil {
-				fmt.Printf("unable to re-execute: %s\n", err)
+				log.G(context.TODO()).WithField("args", cmd.Args).WithError(err).Error("unable to re-execute")
 				os.Exit(1)
 			}
 
-			newUidMap, err := idMapCommand("uid", cmd.Process.Pid, os.Getuid())
-			if err != nil {
-				fmt.Printf("uid mapping error: %s\n", err)
+			if err := newIdMap(cmd.Process.Pid); err != nil {
+				log.G(context.Background()).WithError(err).Error("error while mapping id")
+				os.Exit(1)
 			}
-			newGidMap, err := idMapCommand("gid", cmd.Process.Pid, os.Getgid())
-			if err != nil {
-				fmt.Printf("gid mapping error: %s\n", err)
-			}
-
-			newUidMap.Run()
-			newGidMap.Run()
 
 			writePipe.Close()
 
@@ -192,8 +126,6 @@ func main() {
 	if err := os.MkdirAll(*pathPtr, os.ModePerm); err != nil {
 		fmt.Printf("unable to create imageStore directory: %s\n", err)
 	}
-
-	log.SetLevel("info")
 
 	pluginStore := plugin.NewStore()
 
