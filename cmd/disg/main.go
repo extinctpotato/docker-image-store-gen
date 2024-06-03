@@ -4,24 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/containerd/log"
 	"github.com/extinctpotato/docker-image-store-gen/idmap"
-	"github.com/extinctpotato/docker-image-store-gen/loggers"
 	"github.com/extinctpotato/docker-image-store-gen/process"
-
-	"github.com/docker/docker/image"
-	"github.com/docker/docker/image/tarexport"
-	"github.com/docker/docker/layer"
-	"github.com/docker/docker/pkg/archive"
-	"github.com/docker/docker/pkg/chrootarchive"
-	"github.com/docker/docker/pkg/idtools"
-	"github.com/docker/docker/plugin"
-	refstore "github.com/docker/docker/reference"
+	"github.com/extinctpotato/docker-image-store-gen/wrapper"
 
 	_ "github.com/docker/docker/daemon/graphdriver/overlay2"
 )
@@ -112,61 +101,19 @@ func main() {
 		fmt.Printf("unable to create imageStore directory: %s\n", err)
 	}
 
-	pluginStore := plugin.NewStore()
-
-	layerStore, err := layer.NewStoreFromOptions(layer.StoreOptions{
-		Root:                      *pathPtr,
-		MetadataStorePathTemplate: filepath.Join(*pathPtr, "image", "%s", "layerdb"),
-		GraphDriver:               "overlay2",
-		GraphDriverOptions:        nil,
-		IDMapping:                 idtools.IdentityMapping{},
-		PluginGetter:              pluginStore,
-		ExperimentalEnabled:       true,
-	})
+	minMoby, err := wrapper.NewMinimalMoby(*pathPtr)
 	if err != nil {
-		fmt.Printf("unable to initialize layerStore: %s\n", err)
+		log.G(context.Background()).WithError(err).Error("failed to initialize the wrapper")
 		os.Exit(1)
 	}
 
-	imageRoot := filepath.Join(*pathPtr, "imagedb")
-	imageDb, err := image.NewFSStoreBackend(imageRoot)
-	if err != nil {
-		fmt.Printf("unable to initialize fs backend at %s: %s\n", *pathPtr, imageDb)
+	if err := minMoby.Load(*tarPath); err != nil {
+		log.G(context.Background()).WithError(err).Error("failed to load the archive")
 		os.Exit(1)
 	}
 
-	refStoreLocation := filepath.Join(imageRoot, `repositories.json`)
-	rs, err := refstore.NewReferenceStore(refStoreLocation)
-	if err != nil {
-		fmt.Printf("couldn't create reference store repository: %s", err)
+	if err := minMoby.DumpStore(*outTar); err != nil {
+		log.G(context.Background()).WithError(err).Error("failed to pack the store")
 		os.Exit(1)
-	}
-
-	imageStore, err := image.NewImageStore(imageDb, layerStore)
-	if err != nil {
-		fmt.Printf("couldn't create image store: %s\n", err)
-		os.Exit(1)
-	}
-
-	tarExporter := tarexport.NewTarExporter(imageStore, layerStore, rs, new(loggers.TarExporterLogger))
-	tarToLoad, err := os.Open(*tarPath)
-	if err != nil {
-		fmt.Printf("unable to open %s: %s\n", *tarPath, err)
-	}
-	if err = tarExporter.Load(tarToLoad, new(loggers.TarExporterLoadLogger), false); err != nil {
-		fmt.Printf("unable to load tar: %s\n", err)
-	}
-
-	outputTar, err := os.Create(*outTar)
-	if err != nil {
-		log.G(context.Background()).WithError(err).Error("unable to open output tar for writing")
-		os.Exit(1)
-	}
-
-	arch, err := chrootarchive.Tar(*pathPtr, &archive.TarOptions{
-		Compression: archive.Uncompressed,
-	}, *pathPtr)
-	if _, err := io.Copy(outputTar, arch); err != nil {
-		log.G(context.Background()).WithError(err).Error("writing output tar failed")
 	}
 }
