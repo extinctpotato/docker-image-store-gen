@@ -12,8 +12,6 @@ import (
 	"github.com/extinctpotato/docker-image-store-gen/idmap"
 	"github.com/extinctpotato/docker-image-store-gen/process"
 	"github.com/extinctpotato/docker-image-store-gen/wrapper"
-
-	_ "github.com/docker/docker/daemon/graphdriver/overlay2"
 )
 
 func newIdMap(pid int) error {

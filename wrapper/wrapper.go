@@ -14,6 +14,8 @@ import (
 	"github.com/docker/docker/plugin"
 	"github.com/docker/docker/reference"
 	"github.com/extinctpotato/docker-image-store-gen/loggers"
+
+	_ "github.com/docker/docker/daemon/graphdriver/overlay2"
 )
 
 type MinimalMoby struct {
