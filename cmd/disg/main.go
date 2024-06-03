@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/containerd/log"
 	"github.com/extinctpotato/docker-image-store-gen/idmap"
@@ -37,6 +38,21 @@ func newIdMap(pid int) error {
 	newUidMap.Run()
 	newGidMap.Run()
 	return nil
+}
+
+func archivesToImport(fileOrDir string) ([]string, error) {
+	s, err := os.Stat(fileOrDir)
+	if err != nil {
+		return nil, err
+	}
+	switch mode := s.Mode(); {
+	case mode.IsRegular():
+		return []string{fileOrDir}, err
+	case mode.IsDir():
+		return filepath.Glob(fileOrDir + "/*.tar")
+	default:
+		return nil, nil
+	}
 }
 
 func main() {
@@ -107,9 +123,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := minMoby.Load(*tarPath); err != nil {
-		log.G(context.Background()).WithError(err).Error("failed to load the archive")
+	toImport, err := archivesToImport(*tarPath)
+	if err != nil {
+		log.G(context.Background()).WithError(err).Error("invalid path")
 		os.Exit(1)
+	}
+
+	for _, resolvedTarPath := range toImport {
+		log.G(context.Background()).WithField("path", resolvedTarPath).Info("importing tar")
+		if err := minMoby.Load(resolvedTarPath); err != nil {
+			log.G(context.Background()).WithError(err).Error("failed to load the archive")
+			os.Exit(1)
+		}
 	}
 
 	if err := minMoby.DumpStore(*outTar); err != nil {
