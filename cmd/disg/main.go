@@ -58,6 +58,7 @@ func main() {
 	tarPath := flag.String("tarpath", "/tmp/docker-image-store/test.tar", "path to the tar file to load")
 	outTar := flag.String("out", "/tmp/docker-image-store.tar", "path to the output tar file")
 	unshare := flag.Bool("unshare", false, "Run in a separate user and mount namespace")
+	latestify := flag.Bool("taglatest", false, "Add the :latest tag to the imported images")
 	flag.Parse()
 
 	isNs := idmap.RunningInUserNS()
@@ -129,7 +130,7 @@ func main() {
 
 	for _, resolvedTarPath := range toImport {
 		log.G(context.Background()).WithField("path", resolvedTarPath).Info("importing tar")
-		if err := minMoby.Load(resolvedTarPath); err != nil {
+		if err := minMoby.Load(resolvedTarPath, *latestify); err != nil {
 			log.G(context.Background()).WithError(err).Error("failed to load the archive")
 			os.Exit(1)
 		}

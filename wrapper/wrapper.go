@@ -26,13 +26,34 @@ type MinimalMoby struct {
 	TarExporter image.Exporter
 }
 
-func (m *MinimalMoby) Load(tarPath string) error {
+func (m *MinimalMoby) Load(tarPath string, tagAsLatest bool) error {
 	inTar, err := os.Open(tarPath)
 	if err != nil {
 		return err
 	}
 
-	return m.TarExporter.Load(inTar, new(loggers.TarExporterLoadLogger), false)
+	info, err := BasicTarInfoFromReader(inTar)
+	if err != nil {
+		return err
+	}
+	if _, err := inTar.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+
+	err = m.TarExporter.Load(inTar, new(loggers.TarExporterLoadLogger), false)
+	if err != nil {
+		return err
+	}
+
+	if tagAsLatest {
+		newTag, err := info.WithTag("latest")
+		if err != nil {
+			return err
+		}
+		return m.RefStore.AddTag(newTag, info.ImageId.Digest(), false)
+	}
+
+	return nil
 }
 
 func (m *MinimalMoby) DumpStore(tarPath string) error {

@@ -92,4 +92,12 @@ func TestBasicTarInfoWithHelloWorld(t *testing.T) {
 	if nameNoTag != "docker.io/library/hello-world" {
 		t.Fatalf("invalid name without tag: %s", nameNoTag)
 	}
+
+	withTag, err := bti.WithTag("cooltag")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withTag.String() != "docker.io/library/hello-world:cooltag" {
+		t.Fatalf("invalid name with different tag: %s", withTag.String())
+	}
 }

@@ -64,6 +64,10 @@ func partialManifestFromReader(r io.Reader) (*partialManifest, error) {
 	return &pm, nil
 }
 
+func (b BasicTarInfo) WithTag(tag string) (reference.NamedTagged, error) {
+	return reference.WithTag(b.Ref, tag)
+}
+
 func BasicTarInfoFromReader(r io.ReadSeeker) (*BasicTarInfo, error) {
 	t, err := seekedTarReader(r, "manifest.json")
 	if err != nil {
