@@ -59,6 +59,7 @@ func main() {
 	outTar := flag.String("out", "/tmp/docker-image-store.tar", "path to the output tar file")
 	unshare := flag.Bool("unshare", false, "Run in a separate user and mount namespace")
 	latestify := flag.Bool("taglatest", false, "Add the :latest tag to the imported images")
+	tarSrcPathOverride := flag.String("tar-src-override", "", "Override source directory for output tar")
 	flag.Parse()
 
 	isNs := idmap.RunningInUserNS()
@@ -136,7 +137,7 @@ func main() {
 		}
 	}
 
-	if err := minMoby.DumpStore(*outTar); err != nil {
+	if err := minMoby.DumpStore(*outTar, *tarSrcPathOverride); err != nil {
 		log.G(context.Background()).WithError(err).Error("failed to pack the store")
 		os.Exit(1)
 	}

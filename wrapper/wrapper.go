@@ -56,15 +56,19 @@ func (m *MinimalMoby) Load(tarPath string, tagAsLatest bool) error {
 	return nil
 }
 
-func (m *MinimalMoby) DumpStore(tarPath string) error {
+func (m *MinimalMoby) DumpStore(tarPath string, srcPath string) error {
 	outputTar, err := os.Create(tarPath)
 	if err != nil {
 		return err
 	}
 
-	arch, err := chrootarchive.Tar(m.Root, &archive.TarOptions{
+	if srcPath == "" {
+		srcPath = m.Root
+	}
+
+	arch, err := chrootarchive.Tar(srcPath, &archive.TarOptions{
 		Compression: archive.Uncompressed,
-	}, m.Root)
+	}, srcPath)
 	if err != nil {
 		return err
 	}
