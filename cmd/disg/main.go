@@ -62,8 +62,9 @@ func main() {
 	tarSrcPathOverride := flag.String("tar-src-override", "", "Override source directory for output tar")
 	flag.Parse()
 
+	ctx := context.Background()
 	isNs := idmap.RunningInUserNS()
-	log.G(context.TODO()).WithFields(log.Fields{
+	log.G(ctx).WithFields(log.Fields{
 		"uid":  os.Getuid(),
 		"euid": os.Geteuid(),
 		"gid":  os.Getgid(),
@@ -76,16 +77,16 @@ func main() {
 		if !isNs {
 			cmd, writePipe, err := process.NewFirstLevelReExec()
 			if err != nil {
-				log.G(context.TODO()).WithError(err).Error("first level fail")
+				log.G(ctx).WithError(err).Error("first level fail")
 				os.Exit(1)
 			}
 			if err := cmd.Start(); err != nil {
-				log.G(context.TODO()).WithField("args", cmd.Args).WithError(err).Error("unable to re-execute")
+				log.G(ctx).WithField("args", cmd.Args).WithError(err).Error("unable to re-execute")
 				os.Exit(1)
 			}
 
 			if err := newIdMap(cmd.Process.Pid); err != nil {
-				log.G(context.Background()).WithError(err).Error("error while mapping id")
+				log.G(ctx).WithError(err).Error("error while mapping id")
 				os.Exit(1)
 			}
 
@@ -99,7 +100,7 @@ func main() {
 		} else {
 			err := process.WaitForPipe()
 			if err != nil {
-				log.G(context.TODO()).WithError(err).Error("waiting for pipe failed")
+				log.G(ctx).WithError(err).Error("waiting for pipe failed")
 				os.Exit(1)
 			}
 
@@ -119,26 +120,26 @@ func main() {
 
 	minMoby, err := wrapper.NewMinimalMoby(*pathPtr)
 	if err != nil {
-		log.G(context.Background()).WithError(err).Error("failed to initialize the wrapper")
+		log.G(ctx).WithError(err).Error("failed to initialize the wrapper")
 		os.Exit(1)
 	}
 
 	toImport, err := archivesToImport(*tarPath)
 	if err != nil {
-		log.G(context.Background()).WithError(err).Error("invalid path")
+		log.G(ctx).WithError(err).Error("invalid path")
 		os.Exit(1)
 	}
 
 	for _, resolvedTarPath := range toImport {
-		log.G(context.Background()).WithField("path", resolvedTarPath).Info("importing tar")
+		log.G(ctx).WithField("path", resolvedTarPath).Info("importing tar")
 		if err := minMoby.Load(resolvedTarPath, *latestify); err != nil {
-			log.G(context.Background()).WithError(err).Error("failed to load the archive")
+			log.G(ctx).WithError(err).Error("failed to load the archive")
 			os.Exit(1)
 		}
 	}
 
 	if err := minMoby.DumpStore(*outTar, *tarSrcPathOverride); err != nil {
-		log.G(context.Background()).WithError(err).Error("failed to pack the store")
+		log.G(ctx).WithError(err).Error("failed to pack the store")
 		os.Exit(1)
 	}
 }
